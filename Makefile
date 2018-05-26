@@ -151,6 +151,14 @@ ifdef AVPROGS
 install: install-progs install-data
 endif
 
+ifeq ($(OS),Windows_NT)
+install-compat-win32:
+	$(Q)mkdir -p "$(INCDIR)/compat"
+	$(Q)INSTALL -m 644 "$(SRC_PATH)/compat/w32pthreads.h" "$(INCDIR)/compat"
+
+install: install-compat-win32
+endif
+
 install: install-libs install-headers
 
 install-libs: install-libs-yes

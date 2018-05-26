@@ -76,6 +76,15 @@ HEADERS = adler32.h                                                     \
           tea.h                                                         \
           thread.h                                                      \
 
+ifeq ($(OS),Windows_NT)
+    HEADERS += internal.h                                               \
+               timer.h                                                  \
+               libm.h                                                   \
+
+endif
+
+
+
 HEADERS-$(CONFIG_LZO)                   += lzo.h
 
 HEADERS-$(CONFIG_OPENCL)                += opencl.h

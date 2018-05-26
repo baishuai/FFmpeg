@@ -1,7 +1,10 @@
 LIBAVFORMAT_MAJOR {
     global:
         av*;
+        ijkav_register*;
         #FIXME those are for ffserver
+        ff_alloc_extradata;
+        ff_check_interrupt;
         ff_inet_aton;
         ff_socket_nonblock;
         ff_rtsp_parse_line;
@@ -11,6 +14,9 @@ LIBAVFORMAT_MAJOR {
         ffio_set_buf_size;
         ffurl_close;
         ffurl_open;
+        ffurl_read;
+        ffurl_seek;
+        ffurl_size;
         ffurl_write;
         #those are deprecated, remove on next bump
         url_feof;
