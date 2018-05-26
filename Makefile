@@ -160,6 +160,9 @@ install: install-compat-win32
 endif
 
 install: install-libs install-headers
+	$(Q)mkdir -p "$(INCDIR)/libffmpeg"
+	$(Q)INSTALL -m 644 "$(SRC_PATH)/config.h" "$(INCDIR)/libffmpeg"
+
 
 install-libs: install-libs-yes
 
