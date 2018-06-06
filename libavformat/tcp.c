@@ -405,9 +405,9 @@ static int tcp_open(URLContext *h, const char *uri, int flags)
         memcpy(hostname_bak, hostname, 1024);
         if (s->dns_cache_clear) {
             av_log(NULL, AV_LOG_INFO, "will delete cache entry, hostname = %s\n", hostname);
-            remove_dns_cache_entry(hostname);
+            av_remove_dns_cache_entry(hostname);
         } else {
-            dns_entry = get_dns_cache_reference(hostname);
+            dns_entry = av_get_dns_cache_reference(hostname);
         }
     }
 
@@ -499,7 +499,7 @@ static int tcp_open(URLContext *h, const char *uri, int flags)
                 av_log(NULL, AV_LOG_WARNING, "terminated by application in AVAPP_CTRL_DID_TCP_OPEN");
                 goto fail1;
             } else if (!dns_entry && strcmp(control.ip, hostname_bak)) {
-                add_dns_cache_entry(hostname_bak, cur_ai, s->dns_cache_timeout);
+                av_add_dns_cache_entry(hostname_bak, cur_ai, s->dns_cache_timeout);
                 av_log(NULL, AV_LOG_INFO, "Add dns cache hostname = %s, ip = %s\n", hostname_bak , control.ip);
             }
         }
@@ -509,7 +509,7 @@ static int tcp_open(URLContext *h, const char *uri, int flags)
     s->fd = fd;
 
     if (dns_entry) {
-        release_dns_cache_reference(hostname_bak, &dns_entry);
+        av_release_dns_cache_reference(hostname_bak, &dns_entry);
     } else {
         freeaddrinfo(ai);
     }
@@ -530,8 +530,8 @@ static int tcp_open(URLContext *h, const char *uri, int flags)
 
     if (dns_entry) {
         av_log(NULL, AV_LOG_ERROR, "Hit dns cache but connect fail hostname = %s, ip = %s\n", hostname , control.ip);
-        release_dns_cache_reference(hostname_bak, &dns_entry);
-        remove_dns_cache_entry(hostname_bak);
+        av_release_dns_cache_reference(hostname_bak, &dns_entry);
+        av_remove_dns_cache_entry(hostname_bak);
     } else {
         freeaddrinfo(ai);
     }
@@ -595,9 +595,9 @@ static int tcp_fast_open(URLContext *h, const char *http_request, const char *ur
         memcpy(hostname_bak, hostname, 1024);
         if (s->dns_cache_clear) {
             av_log(NULL, AV_LOG_INFO, "will delete cache entry, hostname = %s\n", hostname);
-            remove_dns_cache_entry(hostname);
+            av_remove_dns_cache_entry(hostname);
         } else {
-            dns_entry = get_dns_cache_reference(hostname);
+            dns_entry = av_get_dns_cache_reference(hostname);
         }
     }
 
@@ -689,7 +689,7 @@ static int tcp_fast_open(URLContext *h, const char *http_request, const char *ur
                 av_log(NULL, AV_LOG_WARNING, "terminated by application in AVAPP_CTRL_DID_TCP_OPEN");
                 goto fail1;
             } else if (!dns_entry && strcmp(control.ip, hostname_bak)) {
-                add_dns_cache_entry(hostname_bak, cur_ai, s->dns_cache_timeout);
+                av_add_dns_cache_entry(hostname_bak, cur_ai, s->dns_cache_timeout);
                 av_log(NULL, AV_LOG_INFO, "Add dns cache hostname = %s, ip = %s\n", hostname_bak , control.ip);
             }
         }
@@ -699,7 +699,7 @@ static int tcp_fast_open(URLContext *h, const char *http_request, const char *ur
     s->fd = fd;
 
     if (dns_entry) {
-        release_dns_cache_reference(hostname_bak, &dns_entry);
+        av_release_dns_cache_reference(hostname_bak, &dns_entry);
     } else {
         freeaddrinfo(ai);
     }
@@ -720,8 +720,8 @@ static int tcp_fast_open(URLContext *h, const char *http_request, const char *ur
 
     if (dns_entry) {
         av_log(NULL, AV_LOG_ERROR, "Hit dns cache but connect fail hostname = %s, ip = %s\n", hostname , control.ip);
-        release_dns_cache_reference(hostname_bak, &dns_entry);
-        remove_dns_cache_entry(hostname_bak);
+        av_release_dns_cache_reference(hostname_bak, &dns_entry);
+        av_remove_dns_cache_entry(hostname_bak);
     } else {
         freeaddrinfo(ai);
     }

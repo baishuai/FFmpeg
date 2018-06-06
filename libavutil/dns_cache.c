@@ -20,11 +20,8 @@
 
 #include "libavutil/dns_cache.h"
 #include "libavutil/time.h"
+#include "libavutil/thread.h"
 #include "libavformat/network.h"
-
-#if HAVE_PTHREADS
-#include <pthread.h>
-#endif
 
 typedef struct DnsCacheContext DnsCacheContext;
 typedef struct DnsCacheContext {
@@ -115,7 +112,7 @@ fail:
     return NULL;
 }
 
-DnsCacheEntry *get_dns_cache_reference(char *hostname) {
+DnsCacheEntry *av_get_dns_cache_reference(char *hostname) {
     AVDictionaryEntry *elem = NULL;
     DnsCacheEntry *dns_cache_entry = NULL;
     int64_t cur_time = av_gettime_relative();
@@ -150,7 +147,7 @@ DnsCacheEntry *get_dns_cache_reference(char *hostname) {
     return dns_cache_entry;
 }
 
-int release_dns_cache_reference(char *hostname, DnsCacheEntry **p_entry) {
+int av_release_dns_cache_reference(char *hostname, DnsCacheEntry **p_entry) {
     DnsCacheEntry *entry = *p_entry;
 
     if (!hostname || strlen(hostname) == 0) {
@@ -169,7 +166,7 @@ int release_dns_cache_reference(char *hostname, DnsCacheEntry **p_entry) {
     return 0;
 }
 
-int remove_dns_cache_entry(char *hostname) {
+int av_remove_dns_cache_entry(char *hostname) {
     AVDictionaryEntry *elem = NULL;
     DnsCacheEntry *dns_cache_entry = NULL;
 
@@ -192,7 +189,7 @@ int remove_dns_cache_entry(char *hostname) {
     return 0;
 }
 
-int add_dns_cache_entry(char *hostname, struct addrinfo *cur_ai, int64_t timeout) {
+int av_add_dns_cache_entry(char *hostname, struct addrinfo *cur_ai, int64_t timeout) {
     DnsCacheEntry *new_entry = NULL;
     DnsCacheEntry *old_entry = NULL;
     AVDictionaryEntry *elem  = NULL;

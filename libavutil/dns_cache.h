@@ -30,9 +30,9 @@ typedef struct DnsCacheEntry {
     struct addrinfo *res;  // construct by private function, not support ai_next and ai_canonname, can only be released using free_private_addrinfo
 } DnsCacheEntry;
 
-DnsCacheEntry *get_dns_cache_reference(char *hostname);
-int release_dns_cache_reference(char *hostname, DnsCacheEntry **p_entry);
-int remove_dns_cache_entry(char *hostname);
-int add_dns_cache_entry(char *hostname, struct addrinfo *cur_ai, int64_t timeout);
+DnsCacheEntry *av_get_dns_cache_reference(char *hostname);
+int av_release_dns_cache_reference(char *hostname, DnsCacheEntry **p_entry);
+int av_remove_dns_cache_entry(char *hostname);
+int av_add_dns_cache_entry(char *hostname, struct addrinfo *cur_ai, int64_t timeout);
 
 #endif /* AVUTIL_DNS_CACHE_H */
