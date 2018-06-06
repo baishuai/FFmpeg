@@ -68,6 +68,7 @@ typedef struct HTTPContext {
     char *location;
     HTTPAuthState auth_state;
     HTTPAuthState proxy_auth_state;
+    char *host;
     char *http_proxy;
     char *headers;
     char *mime_type;
@@ -134,6 +135,7 @@ typedef struct HTTPContext {
 static const AVOption options[] = {
     { "seekable", "control seekability of connection", OFFSET(seekable), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, D },
     { "chunked_post", "use chunked transfer-encoding for posts", OFFSET(chunked_post), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, E },
+    { "host", "set HTTP host to replace the default host in header", OFFSET(host), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D | E},
     { "http_proxy", "set HTTP proxy to tunnel through", OFFSET(http_proxy), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D | E },
     { "headers", "set custom HTTP headers, can override built in default headers", OFFSET(headers), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D | E },
     { "content_type", "set a specific content type for the POST messages", OFFSET(content_type), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, D | E },
@@ -200,7 +202,13 @@ static int http_open_cnx_internal(URLContext *h, AVDictionary **options)
     av_url_split(proto, sizeof(proto), auth, sizeof(auth),
                  hostname, sizeof(hostname), &port,
                  path1, sizeof(path1), s->location);
-    ff_url_join(hoststr, sizeof(hoststr), NULL, NULL, hostname, port, NULL);
+    
+    if (s->host) {
+        ff_url_join(hoststr, sizeof(hoststr), NULL, NULL, s->host, -1, NULL);
+    }else{
+        ff_url_join(hoststr, sizeof(hoststr), NULL, NULL, hostname, port, NULL);
+    }
+
 
     proxy_path = s->http_proxy ? s->http_proxy : getenv("http_proxy");
     use_proxy  = !ff_http_match_no_proxy(getenv("no_proxy"), hostname) &&
