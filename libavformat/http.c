@@ -614,6 +614,8 @@ static int check_http_code(URLContext *h, int http_code, const char *end)
         end += strspn(end, SPACE_CHARS);
         av_log(h, AV_LOG_WARNING, "HTTP error %d %s %s\n", http_code, end, h->filename);
         return ff_http_averror(http_code, AVERROR(EIO));
+    } else if (http_code != 200) {
+        av_log(h, AV_LOG_WARNING, "HTTP warning %d %s %s\n", http_code, end, h->filename);
     }
     return 0;
 }
