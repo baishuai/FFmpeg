@@ -612,7 +612,7 @@ static int check_http_code(URLContext *h, int http_code, const char *end)
         (http_code != 401 || s->auth_state.auth_type != HTTP_AUTH_NONE) &&
         (http_code != 407 || s->proxy_auth_state.auth_type != HTTP_AUTH_NONE)) {
         end += strspn(end, SPACE_CHARS);
-        av_log(h, AV_LOG_WARNING, "HTTP error %d %s\n", http_code, end);
+        av_log(h, AV_LOG_WARNING, "HTTP error %d %s %s\n", http_code, end, h->filename);
         return ff_http_averror(http_code, AVERROR(EIO));
     }
     return 0;
