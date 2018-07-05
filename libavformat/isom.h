@@ -24,6 +24,13 @@
 #ifndef AVFORMAT_ISOM_H
 #define AVFORMAT_ISOM_H
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "libavutil/mastering_display_metadata.h"
+#include "libavutil/spherical.h"
+#include "libavutil/stereo3d.h"
+
 #include "avio.h"
 #include "internal.h"
 #include "dv.h"
@@ -45,7 +52,7 @@ struct AVAESCTR;
  */
 
 typedef struct MOVStts {
-    int count;
+    unsigned int count;
     int duration;
 } MOVStts;
 
@@ -115,6 +122,11 @@ typedef struct MOVFragmentIndex {
     MOVFragmentIndexItem *items;
 } MOVFragmentIndex;
 
+typedef struct MOVIndexRange {
+    int64_t start;
+    int64_t end;
+} MOVIndexRange;
+
 typedef struct MOVStreamContext {
     AVIOContext *pb;
     int pb_is_copied;
@@ -125,10 +137,11 @@ typedef struct MOVStreamContext {
     unsigned int stts_count;
     MOVStts *stts_data;
     unsigned int ctts_count;
+    unsigned int ctts_allocated_size;
     MOVStts *ctts_data;
     unsigned int stsc_count;
     MOVStsc *stsc_data;
-    int stsc_index;
+    unsigned int stsc_index;
     int stsc_sample;
     unsigned int stps_count;
     unsigned *stps_data;  ///< partial sync sample for mpeg-2 open gop
@@ -146,6 +159,9 @@ typedef struct MOVStreamContext {
     int time_scale;
     int64_t time_offset;  ///< time offset of the edit list entries
     int current_sample;
+    int64_t current_index;
+    MOVIndexRange* index_ranges;
+    MOVIndexRange* current_index_range;
     unsigned int bytes_per_frame;
     unsigned int samples_per_frame;
     int dv_audio_container;
@@ -177,8 +193,16 @@ typedef struct MOVStreamContext {
     int stsd_count;
 
     int32_t *display_matrix;
+    AVStereo3D *stereo3d;
+    AVSphericalMapping *spherical;
+    size_t spherical_size;
+    AVMasteringDisplayMetadata *mastering;
+    AVContentLightMetadata *coll;
+    size_t coll_size;
+
     uint32_t format;
 
+    int has_sidx;  // If there is an sidx entry for this stream.
     struct {
         int use_subsamples;
         uint8_t* auxiliary_info;
@@ -187,9 +211,71 @@ typedef struct MOVStreamContext {
         uint8_t auxiliary_info_default_size;
         uint8_t* auxiliary_info_sizes;
         size_t auxiliary_info_sizes_count;
+        int64_t auxiliary_info_index;
         struct AVAESCTR* aes_ctr;
     } cenc;
 } MOVStreamContext;
+
+
+// ---------- Jerry.Yin ----------
+typedef struct MOVBoxContext {
+    uint8_t *box_buffer;
+    int box_size;
+    AVIOContext *pb;
+} MOVBoxContext;
+
+typedef struct BoxBufferContext {
+    uint8_t *box_buffer;
+    int box_size;
+    int read_size;
+} BoxBufferContext;
+
+typedef struct CTTSQuickContext {
+    unsigned int total_ctts_entry_count;
+    unsigned int parsed_ctts_index;
+    int has_finished_ctts;
+    unsigned int previous_sample_count;
+} CTTSQuickContext;
+
+typedef struct STSCQuickContext {
+    unsigned int total_stsc_entry_count;
+    unsigned int stsc_chunk_index;
+    unsigned int parsed_stsc_index;
+    int has_finished_stsc;
+    unsigned int previous_sample_count;
+} STSCQuickContext;
+
+typedef struct STSZQuickContext {
+    unsigned int total_stsz_sample_count;
+    unsigned int stsz_sample_index;
+    unsigned int parsed_stsz_index;
+    int has_finished_stsz;
+    unsigned int previous_sample_count;
+} STSZQuickContext;
+
+typedef struct STCOQuickContext {
+    unsigned int total_stco_entry_count;
+    unsigned int stco_chunk_index;
+    unsigned int parsed_stco_chunk_index;
+    int has_finished_stco;
+} STCOQuickContext;
+
+typedef struct StblContext {
+    BoxBufferContext *ctts_box_buf;
+    BoxBufferContext *stsz_box_buf;
+    BoxBufferContext *stco_box_buf;
+
+    CTTSQuickContext ctts_quick_ctx;
+    STSCQuickContext stsc_quick_ctx;
+    STSZQuickContext stsz_quick_ctx;
+    STCOQuickContext stco_quick_ctx;
+
+    unsigned int parsed_ts_index;
+    int64_t current_dts;
+    unsigned int key_distance;
+    unsigned int stts_index;
+} StblContext;
+// ---------- Jerry.Yin ----------
 
 typedef struct MOVContext {
     const AVClass *class; ///< class for private options
@@ -214,6 +300,7 @@ typedef struct MOVContext {
     unsigned int nb_chapter_tracks;
     int use_absolute_path;
     int ignore_editlist;
+    int advanced_editlist;
     int ignore_chapters;
     int seek_individually;
     int64_t next_root_atom; ///< offset of the next root atom
@@ -239,6 +326,37 @@ typedef struct MOVContext {
     uint8_t *decryption_key;
     int decryption_key_len;
     int enable_drefs;
+    int allow_multi_extradata;
+    int has_extradata;
+    int32_t movie_display_matrix[3][3]; ///< display matrix from mvhd
+
+    int quick_parse_mp4;    // Identifier for quick-parsing mp4 header.
+    StblContext *stbl_ctx;
+    int keyframes_parsed;
+
+    int entry_index_fixed;
+    int64_t edit_timeline_offset;
+
+    /*
+    * Total gop counts in video stream.
+    */
+    int total_gops;
+
+    /*
+    *  Gop counts parsed in video stream by quick-parsing process.
+    */
+    int parsed_gops;
+
+    /*
+    *  Dts of last video sample currently parsed
+    */
+    int last_video_dts;
+
+    /*
+    * Identifier representing if all gops have been parsed.
+    */    
+    int parsing_completed;
+
 } MOVContext;
 
 int ff_mp4_read_descr_len(AVIOContext *pb);

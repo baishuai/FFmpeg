@@ -34,8 +34,7 @@ typedef enum ConcatMatchMode {
 } ConcatMatchMode;
 
 typedef struct ConcatStream {
-    AVBitStreamFilterContext *bsf;
-    AVCodecContext *avctx;
+    AVBSFContext *bsf;
     int out_stream_index;
 } ConcatStream;
 
@@ -45,6 +44,7 @@ typedef struct {
     int64_t file_start_time;
     int64_t file_inpoint;
     int64_t duration;
+    int64_t next_dts;
     ConcatStream *streams;
     int64_t inpoint;
     int64_t outpoint;
@@ -123,7 +123,7 @@ static int add_file(AVFormatContext *avf, char *filename, ConcatFile **rfile,
 
     proto = avio_find_protocol_name(filename);
     proto_len = proto ? strlen(proto) : 0;
-    if (!memcmp(filename, proto, proto_len) &&
+    if (proto && !memcmp(filename, proto, proto_len) &&
         (filename[proto_len] == ':' || filename[proto_len] == ',')) {
         url = filename;
         filename = NULL;
@@ -152,6 +152,7 @@ static int add_file(AVFormatContext *avf, char *filename, ConcatFile **rfile,
     file->url        = url;
     file->start_time = AV_NOPTS_VALUE;
     file->duration   = AV_NOPTS_VALUE;
+    file->next_dts   = AV_NOPTS_VALUE;
     file->inpoint    = AV_NOPTS_VALUE;
     file->outpoint   = AV_NOPTS_VALUE;
 
@@ -186,8 +187,8 @@ static int copy_stream_props(AVStream *st, AVStream *source_st)
         return ret;
     st->r_frame_rate        = source_st->r_frame_rate;
     st->avg_frame_rate      = source_st->avg_frame_rate;
-    st->time_base           = source_st->time_base;
     st->sample_aspect_ratio = source_st->sample_aspect_ratio;
+    avpriv_set_pts_info(st, 64, source_st->time_base.num, source_st->time_base.den);
 
     av_dict_copy(&st->metadata, source_st->metadata, 0);
     return 0;
@@ -198,36 +199,39 @@ static int detect_stream_specific(AVFormatContext *avf, int idx)
     ConcatContext *cat = avf->priv_data;
     AVStream *st = cat->avf->streams[idx];
     ConcatStream *cs = &cat->cur_file->streams[idx];
-    AVBitStreamFilterContext *bsf;
+    const AVBitStreamFilter *filter;
+    AVBSFContext *bsf;
     int ret;
 
-    if (cat->auto_convert && st->codecpar->codec_id == AV_CODEC_ID_H264 &&
-        (st->codecpar->extradata_size < 4 || AV_RB32(st->codecpar->extradata) != 1)) {
+    if (cat->auto_convert && st->codecpar->codec_id == AV_CODEC_ID_H264) {
+        if (!st->codecpar->extradata_size                                                ||
+            (st->codecpar->extradata_size >= 3 && AV_RB24(st->codecpar->extradata) == 1) ||
+            (st->codecpar->extradata_size >= 4 && AV_RB32(st->codecpar->extradata) == 1))
+            return 0;
         av_log(cat->avf, AV_LOG_INFO,
                "Auto-inserting h264_mp4toannexb bitstream filter\n");
-        if (!(bsf = av_bitstream_filter_init("h264_mp4toannexb"))) {
+        filter = av_bsf_get_by_name("h264_mp4toannexb");
+        if (!filter) {
             av_log(avf, AV_LOG_ERROR, "h264_mp4toannexb bitstream filter "
                    "required for H.264 streams\n");
             return AVERROR_BSF_NOT_FOUND;
         }
+        ret = av_bsf_alloc(filter, &bsf);
+        if (ret < 0)
+            return ret;
         cs->bsf = bsf;
 
-        cs->avctx = avcodec_alloc_context3(NULL);
-        if (!cs->avctx)
-            return AVERROR(ENOMEM);
+        ret = avcodec_parameters_copy(bsf->par_in, st->codecpar);
+        if (ret < 0)
+           return ret;
 
-        /* This really should be part of the bsf work.
-           Note: input bitstream filtering will not work with bsf that
-           create extradata from the first packet. */
-        av_freep(&st->codecpar->extradata);
-        st->codecpar->extradata_size = 0;
-
-        ret = avcodec_parameters_to_context(cs->avctx, st->codecpar);
-        if (ret < 0) {
-            avcodec_free_context(&cs->avctx);
+        ret = av_bsf_init(bsf);
+        if (ret < 0)
             return ret;
-        }
 
+        ret = avcodec_parameters_copy(st->codecpar, bsf->par_out);
+        if (ret < 0)
+            return ret;
     }
     return 0;
 }
@@ -290,8 +294,11 @@ static int match_streams(AVFormatContext *avf)
     memset(map + cat->cur_file->nb_streams, 0,
            (cat->avf->nb_streams - cat->cur_file->nb_streams) * sizeof(*map));
 
-    for (i = cat->cur_file->nb_streams; i < cat->avf->nb_streams; i++)
+    for (i = cat->cur_file->nb_streams; i < cat->avf->nb_streams; i++) {
         map[i].out_stream_index = -1;
+        if ((ret = detect_stream_specific(avf, i)) < 0)
+            return ret;
+    }
     switch (cat->stream_match_mode) {
     case MATCH_ONE_TO_ONE:
         ret = match_streams_one_to_one(avf);
@@ -304,9 +311,6 @@ static int match_streams(AVFormatContext *avf)
     }
     if (ret < 0)
         return ret;
-    for (i = cat->cur_file->nb_streams; i < cat->avf->nb_streams; i++)
-        if ((ret = detect_stream_specific(avf, i)) < 0)
-            return ret;
     cat->cur_file->nb_streams = cat->avf->nb_streams;
     return 0;
 }
@@ -318,11 +322,20 @@ static int open_file(AVFormatContext *avf, unsigned fileno)
     AVFormatContext *new_avf = NULL;
     int ret;
     AVDictionary *tmp = NULL;
+    AVDictionaryEntry *t = NULL;
+    int fps_flag = 0;
 
     new_avf = avformat_alloc_context();
     if (!new_avf)
         return AVERROR(ENOMEM);
 
+    new_avf->flags |= avf->flags & ~AVFMT_FLAG_CUSTOM_IO;
+
+#ifdef FF_API_LAVF_KEEPSIDE_FLAG
+    if (avf->flags & AVFMT_FLAG_KEEP_SIDE_DATA) {
+        new_avf->flags |= AVFMT_FLAG_KEEP_SIDE_DATA;
+    }
+#endif
     new_avf->interrupt_callback = avf->interrupt_callback;
 
     if ((ret = ff_copy_whiteblacklists(new_avf, avf)) < 0)
@@ -332,6 +345,24 @@ static int open_file(AVFormatContext *avf, unsigned fileno)
         av_dict_copy(&tmp, cat->options, 0);
 
     av_dict_set_int(&tmp, "cur_file_no", fileno, 0);
+
+    t = av_dict_get(tmp, "skip-calc-frame-rate", NULL, AV_DICT_MATCH_CASE);
+    if (t) {
+        fps_flag = (int) strtol(t->value, NULL, 10);
+        if (fps_flag > 0) {
+            av_dict_set_int(&new_avf->metadata, "skip-calc-frame-rate", fps_flag, 0);
+        }
+    }
+
+    t = av_dict_get(tmp, "nb-streams", NULL, AV_DICT_MATCH_CASE);
+    if (t) {
+        int nb_streams = (int) strtol(t->value, NULL, 10);
+        if (nb_streams > 0) {
+            av_dict_set_int(&new_avf->metadata, "nb-streams", nb_streams, 0);
+            av_dict_set_int(&cat->options, "nb-streams", 0, 0);
+        }
+    }
+
     ret = avformat_open_input(&new_avf, file->url, NULL, &tmp);
     av_dict_free(&tmp);
     if (ret < 0 ||
@@ -382,10 +413,8 @@ static int concat_read_close(AVFormatContext *avf)
     for (i = 0; i < cat->nb_files; i++) {
         av_freep(&cat->files[i].url);
         for (j = 0; j < cat->files[i].nb_streams; j++) {
-            if (cat->files[i].streams[j].avctx)
-                avcodec_free_context(&cat->files[i].streams[j].avctx);
             if (cat->files[i].streams[j].bsf)
-                av_bitstream_filter_close(cat->files[i].streams[j].bsf);
+                av_bsf_free(&cat->files[i].streams[j].bsf);
         }
         av_freep(&cat->files[i].streams);
         av_dict_free(&cat->files[i].metadata);
@@ -528,8 +557,14 @@ static int open_next_file(AVFormatContext *avf)
     ConcatContext *cat = avf->priv_data;
     unsigned fileno = cat->cur_file - cat->files;
 
-    if (cat->cur_file->duration == AV_NOPTS_VALUE)
-        cat->cur_file->duration = cat->avf->duration - (cat->cur_file->file_inpoint - cat->cur_file->file_start_time);
+    if (cat->cur_file->duration == AV_NOPTS_VALUE) {
+        if (cat->avf->duration > 0 || cat->cur_file->next_dts == AV_NOPTS_VALUE) {
+            cat->cur_file->duration = cat->avf->duration;
+        } else {
+            cat->cur_file->duration = cat->cur_file->next_dts;
+        }
+        cat->cur_file->duration -= (cat->cur_file->file_inpoint - cat->cur_file->file_start_time);
+    }
 
     if (++fileno >= cat->nb_files) {
         cat->eof = 1;
@@ -540,56 +575,25 @@ static int open_next_file(AVFormatContext *avf)
 
 static int filter_packet(AVFormatContext *avf, ConcatStream *cs, AVPacket *pkt)
 {
-    AVStream *st = avf->streams[cs->out_stream_index];
-    AVBitStreamFilterContext *bsf;
-    AVPacket pkt2;
     int ret;
 
-    av_assert0(cs->out_stream_index >= 0);
-    for (bsf = cs->bsf; bsf; bsf = bsf->next) {
-        pkt2 = *pkt;
-
-        ret = av_bitstream_filter_filter(bsf, cs->avctx, NULL,
-                                         &pkt2.data, &pkt2.size,
-                                         pkt->data, pkt->size,
-                                         !!(pkt->flags & AV_PKT_FLAG_KEY));
+    if (cs->bsf) {
+        ret = av_bsf_send_packet(cs->bsf, pkt);
         if (ret < 0) {
+            av_log(avf, AV_LOG_ERROR, "h264_mp4toannexb filter "
+                   "failed to send input packet\n");
             av_packet_unref(pkt);
             return ret;
         }
 
-        if (cs->avctx->extradata_size > st->codecpar->extradata_size) {
-            int eret;
-            if (st->codecpar->extradata)
-                av_freep(&st->codecpar->extradata);
+        while (!ret)
+            ret = av_bsf_receive_packet(cs->bsf, pkt);
 
-            eret = ff_alloc_extradata(st->codecpar, cs->avctx->extradata_size);
-            if (eret < 0) {
-                av_packet_unref(pkt);
-                return AVERROR(ENOMEM);
-            }
-            st->codecpar->extradata_size = cs->avctx->extradata_size;
-            memcpy(st->codecpar->extradata, cs->avctx->extradata, cs->avctx->extradata_size);
+        if (ret < 0 && (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)) {
+            av_log(avf, AV_LOG_ERROR, "h264_mp4toannexb filter "
+                   "failed to receive output packet\n");
+            return ret;
         }
-
-        av_assert0(pkt2.buf);
-        if (ret == 0 && pkt2.data != pkt->data) {
-            if ((ret = av_copy_packet(&pkt2, pkt)) < 0) {
-                av_free(pkt2.data);
-                return ret;
-            }
-            ret = 1;
-        }
-        if (ret > 0) {
-            av_packet_unref(pkt);
-            pkt2.buf = av_buffer_create(pkt2.data, pkt2.size,
-                                        av_buffer_default_free, NULL, 0);
-            if (!pkt2.buf) {
-                av_free(pkt2.data);
-                return AVERROR(ENOMEM);
-            }
-        }
-        *pkt = pkt2;
     }
     return 0;
 }
@@ -703,6 +707,14 @@ open_fail:
         memcpy(metadata, packed_metadata, metadata_len);
         av_freep(&packed_metadata);
     }
+
+    if (cat->cur_file->duration == AV_NOPTS_VALUE && st->cur_dts != AV_NOPTS_VALUE) {
+        int64_t next_dts = av_rescale_q(st->cur_dts, st->time_base, AV_TIME_BASE_Q);
+        if (cat->cur_file->next_dts == AV_NOPTS_VALUE || next_dts > cat->cur_file->next_dts) {
+            cat->cur_file->next_dts = next_dts;
+        }
+    }
+
     return ret;
 }
 

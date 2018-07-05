@@ -80,7 +80,7 @@ void av_application_will_http_open(AVApplicationContext *h, void *obj, const cha
     av_application_on_http_event(h, AVAPP_EVENT_WILL_HTTP_OPEN, &event);
 }
 
-void av_application_did_http_open(AVApplicationContext *h, void *obj, const char *url, int error, int http_code)
+void av_application_did_http_open(AVApplicationContext *h, void *obj, const char *url, int error, int http_code, int64_t filesize)
 {
     AVAppHttpEvent event = {0};
 
@@ -91,6 +91,7 @@ void av_application_did_http_open(AVApplicationContext *h, void *obj, const char
     av_strlcpy(event.url, url, sizeof(event.url));
     event.error     = error;
     event.http_code = http_code;
+    event.filesize  = filesize;
 
     av_application_on_http_event(h, AVAPP_EVENT_DID_HTTP_OPEN, &event);
 }
@@ -148,14 +149,13 @@ int av_application_on_tcp_will_open(AVApplicationContext *h)
 }
 
 // only callback returns error
-int av_application_on_tcp_did_open(AVApplicationContext *h, int error, int fd)
+int av_application_on_tcp_did_open(AVApplicationContext *h, int error, int fd, AVAppTcpIOControl *control)
 {
     struct sockaddr_storage so_stg;
     int       ret = 0;
     socklen_t so_len = sizeof(so_stg);
     int       so_family;
-    AVAppTcpIOControl control = {0};
-    char      *so_ip_name = control.ip;
+    char      *so_ip_name = control->ip;
 
     if (!h || !h->func_on_app_event || fd <= 0)
         return 0;
@@ -163,30 +163,30 @@ int av_application_on_tcp_did_open(AVApplicationContext *h, int error, int fd)
     ret = getpeername(fd, (struct sockaddr *)&so_stg, &so_len);
     if (ret)
         return 0;
-    control.error = error;
-    control.fd = fd;
+    control->error = error;
+    control->fd = fd;
 
     so_family = ((struct sockaddr*)&so_stg)->sa_family;
     switch (so_family) {
         case AF_INET: {
             struct sockaddr_in* in4 = (struct sockaddr_in*)&so_stg;
-            if (inet_ntop(AF_INET, &(in4->sin_addr), so_ip_name, sizeof(control.ip))) {
-                control.family = AF_INET;
-                control.port = in4->sin_port;
+            if (inet_ntop(AF_INET, &(in4->sin_addr), so_ip_name, sizeof(control->ip))) {
+                control->family = AF_INET;
+                control->port = in4->sin_port;
             }
             break;
         }
         case AF_INET6: {
             struct sockaddr_in6* in6 = (struct sockaddr_in6*)&so_stg;
-            if (inet_ntop(AF_INET6, &(in6->sin6_addr), so_ip_name, sizeof(control.ip))) {
-                control.family = AF_INET6;
-                control.port = in6->sin6_port;
+            if (inet_ntop(AF_INET6, &(in6->sin6_addr), so_ip_name, sizeof(control->ip))) {
+                control->family = AF_INET6;
+                control->port = in6->sin6_port;
             }
             break;
         }
     }
 
-    return h->func_on_app_event(h, AVAPP_CTRL_DID_TCP_OPEN, (void *)&control, sizeof(AVAppTcpIOControl));
+    return h->func_on_app_event(h, AVAPP_CTRL_DID_TCP_OPEN, (void *)control, sizeof(AVAppTcpIOControl));
 }
 
 void av_application_on_async_statistic(AVApplicationContext *h, AVAppAsyncStatistic *statistic)
